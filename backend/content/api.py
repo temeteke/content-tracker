@@ -14,9 +14,9 @@ from .models import (
     ContentType,
     LinkType,
 )
-from .services import merge_content_items
+from .services import merge_content_items, validate_parent_assignment
 
-api = NinjaAPI(title="content-tracker API", version="0.2.0")
+api = NinjaAPI(title="content-tracker API", version="0.3.0")
 
 
 class ContentItemIn(Schema):
@@ -138,13 +138,16 @@ def update_item(request, item_id: UUID, payload: ContentItemPatch):
     if "description" in fields and payload.description is not None:
         item.description = payload.description
     if "parent_id" in fields:
-        if payload.parent_id == item.id:
-            raise HttpError(422, "an item cannot be its own parent")
-        item.parent = (
+        parent = (
             get_object_or_404(ContentItem, id=payload.parent_id)
             if payload.parent_id
             else None
         )
+        try:
+            validate_parent_assignment(item, parent)
+        except ValueError as exc:
+            raise HttpError(422, str(exc)) from exc
+        item.parent = parent
 
     item.save()
     return item

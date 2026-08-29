@@ -4,7 +4,23 @@ from uuid import UUID
 from django.db import transaction
 
 from .adapters.base import ContentCandidate
-from .models import ContentItem, ContentLink, LinkType
+from .models import ContentItem, ContentLink, ContentType, LinkType
+
+
+def _is_ancestor(ancestor: ContentItem, item: ContentItem) -> bool:
+    current = item.parent
+    while current is not None:
+        if current.id == ancestor.id:
+            return True
+        current = current.parent
+    return False
+
+
+def validate_parent_assignment(item: ContentItem, parent: ContentItem | None) -> None:
+    if parent is None:
+        return
+    if parent.id == item.id or _is_ancestor(item, parent):
+        raise ValueError("parent assignment would create a hierarchy cycle")
 
 
 @transaction.atomic
@@ -15,9 +31,8 @@ def merge_content_items(*, target_id: UUID, source_id: UUID) -> ContentItem:
     target = ContentItem.objects.select_for_update().get(id=target_id)
     source = ContentItem.objects.select_for_update().get(id=source_id)
 
-    if target.parent_id == source.id:
-        target.parent = source.parent
-        target.save(update_fields=["parent", "updated_at"])
+    if _is_ancestor(target, source) or _is_ancestor(source, target):
+        raise ValueError("items in the same hierarchy branch cannot be merged")
 
     ContentItem.objects.filter(parent=source).update(parent=target)
     ContentLink.objects.filter(content_item=source).update(content_item=target)
@@ -39,6 +54,9 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
     updated = 0
 
     for candidate in candidates:
+        if candidate.content_type not in ContentType.values:
+            raise ValueError(f"unsupported content type: {candidate.content_type}")
+
         link = None
         if candidate.source and candidate.external_id:
             link = ContentLink.objects.select_related("content_item").filter(

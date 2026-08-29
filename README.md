@@ -11,7 +11,7 @@ The application is intentionally separated from media storage and playback syste
 - Attach globally unique ContentLinks and preserve source metadata for later processing.
 - Plan content with `planned`, `active`, `completed`, and `dropped` states.
 - Record multiple consumption events per ContentItem.
-- Merge duplicate ContentItems manually while retaining their links.
+- Merge duplicate ContentItems manually while retaining their links and history.
 - Import metadata through pull-based adapters.
 
 ## Non-goals
@@ -27,6 +27,41 @@ content-tracker does **not** own media files, playback URLs, authentication cred
 
 Kubernetes manifests, Helm charts, and environment-specific deployment configuration are intentionally maintained in a separate deployment repository. This repository contains only application code and application-level configuration.
 
+## Development
+
+The backend can use SQLite when `DB_HOST` is empty, so PostgreSQL is not required for basic local development.
+
+Backend:
+
+```console
+cd backend
+python -m venv .venv
+. .venv/bin/activate
+pip install -e ".[dev]"
+python manage.py migrate
+python manage.py runserver
+```
+
+Frontend:
+
+```console
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite development server proxies `/api` to the backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
+
+### Source synchronization
+
+Source adapters implement `content.adapters.base.SourceAdapter` and return metadata-only `ContentCandidate` objects. Run one or more adapters with:
+
+```console
+python manage.py sync_content package.module.AdapterClass
+```
+
+A deployment repository can invoke the same command from a Kubernetes CronJob. Adapter endpoints and credentials must be supplied at runtime rather than committed here.
+
 ## Public repository policy
 
 This repository must not contain private deployment details or secrets. In particular, do not commit:
@@ -41,4 +76,4 @@ Runtime-specific configuration belongs in environment variables or deployment-sp
 
 ## Development status
 
-Initial implementation is in progress.
+Initial MVP development is in progress.
