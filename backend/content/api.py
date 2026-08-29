@@ -1,13 +1,22 @@
 from datetime import datetime
 from uuid import UUID
 
+from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from ninja import NinjaAPI, Schema
 from ninja.errors import HttpError
 
-from .models import ConsumptionHistory, ConsumptionStatus, ContentItem, ContentType
+from .models import (
+    ConsumptionHistory,
+    ConsumptionStatus,
+    ContentItem,
+    ContentLink,
+    ContentType,
+    LinkType,
+)
+from .services import merge_content_items
 
-api = NinjaAPI(title="content-tracker API", version="0.1.0")
+api = NinjaAPI(title="content-tracker API", version="0.2.0")
 
 
 class ContentItemIn(Schema):
@@ -16,6 +25,14 @@ class ContentItemIn(Schema):
     parent_id: UUID | None = None
     status: ConsumptionStatus = ConsumptionStatus.PLANNED
     description: str = ""
+
+
+class ContentItemPatch(Schema):
+    title: str | None = None
+    content_type: ContentType | None = None
+    parent_id: UUID | None = None
+    status: ConsumptionStatus | None = None
+    description: str | None = None
 
 
 class ContentItemOut(Schema):
@@ -29,6 +46,23 @@ class ContentItemOut(Schema):
     duration_seconds: int | None
     created_at: datetime
     updated_at: datetime
+
+
+class ContentLinkIn(Schema):
+    url: str
+    link_type: LinkType = LinkType.SOURCE
+    source: str | None = None
+    external_id: str | None = None
+
+
+class ContentLinkOut(Schema):
+    id: UUID
+    content_item_id: UUID
+    url: str
+    link_type: str
+    source: str | None
+    external_id: str | None
+    created_at: datetime
 
 
 class ConsumptionHistoryIn(Schema):
@@ -46,19 +80,29 @@ class ConsumptionHistoryOut(Schema):
     created_at: datetime
 
 
+class MergeIn(Schema):
+    source_item_id: UUID
+
+
 @api.get("/health")
 def health(request):
     return {"status": "ok"}
 
 
 @api.get("/items", response=list[ContentItemOut])
-def list_items(request, content_type: ContentType | None = None,
-               status: ConsumptionStatus | None = None):
+def list_items(
+    request,
+    content_type: ContentType | None = None,
+    status: ConsumptionStatus | None = None,
+    query: str | None = None,
+):
     items = ContentItem.objects.all()
     if content_type is not None:
         items = items.filter(content_type=content_type)
     if status is not None:
         items = items.filter(status=status)
+    if query:
+        items = items.filter(title__icontains=query.strip())
     return items
 
 
@@ -80,6 +124,59 @@ def get_item(request, item_id: UUID):
     return get_object_or_404(ContentItem, id=item_id)
 
 
+@api.patch("/items/{item_id}", response=ContentItemOut)
+def update_item(request, item_id: UUID, payload: ContentItemPatch):
+    item = get_object_or_404(ContentItem, id=item_id)
+    fields = payload.model_fields_set
+
+    if "title" in fields and payload.title is not None:
+        item.title = payload.title
+    if "content_type" in fields and payload.content_type is not None:
+        item.content_type = payload.content_type
+    if "status" in fields and payload.status is not None:
+        item.status = payload.status
+    if "description" in fields and payload.description is not None:
+        item.description = payload.description
+    if "parent_id" in fields:
+        if payload.parent_id == item.id:
+            raise HttpError(422, "an item cannot be its own parent")
+        item.parent = (
+            get_object_or_404(ContentItem, id=payload.parent_id)
+            if payload.parent_id
+            else None
+        )
+
+    item.save()
+    return item
+
+
+@api.get("/items/{item_id}/links", response=list[ContentLinkOut])
+def list_links(request, item_id: UUID):
+    return get_object_or_404(ContentItem, id=item_id).links.all()
+
+
+@api.post("/items/{item_id}/links", response={201: ContentLinkOut})
+def add_link(request, item_id: UUID, payload: ContentLinkIn):
+    item = get_object_or_404(ContentItem, id=item_id)
+    try:
+        link = ContentLink.objects.create(
+            content_item=item,
+            url=payload.url,
+            link_type=payload.link_type,
+            source=payload.source,
+            external_id=payload.external_id,
+        )
+    except IntegrityError as exc:
+        raise HttpError(409, "link already exists") from exc
+    return 201, link
+
+
+@api.delete("/links/{link_id}", response={204: None})
+def delete_link(request, link_id: UUID):
+    get_object_or_404(ContentLink, id=link_id).delete()
+    return 204, None
+
+
 @api.get("/items/{item_id}/history", response=list[ConsumptionHistoryOut])
 def list_history(request, item_id: UUID):
     return get_object_or_404(ContentItem, id=item_id).consumption_history.all()
@@ -90,6 +187,7 @@ def add_history(request, item_id: UUID, payload: ConsumptionHistoryIn):
     item = get_object_or_404(ContentItem, id=item_id)
     if payload.rating is not None and not 1 <= payload.rating <= 5:
         raise HttpError(422, "rating must be between 1 and 5")
+
     history = ConsumptionHistory.objects.create(
         content_item=item,
         consumed_at=payload.consumed_at,
@@ -100,3 +198,14 @@ def add_history(request, item_id: UUID, payload: ConsumptionHistoryIn):
         item.status = ConsumptionStatus.COMPLETED
         item.save(update_fields=["status", "updated_at"])
     return 201, history
+
+
+@api.post("/items/{item_id}/merge", response=ContentItemOut)
+def merge_item(request, item_id: UUID, payload: MergeIn):
+    try:
+        return merge_content_items(
+            target_id=item_id,
+            source_id=payload.source_item_id,
+        )
+    except ValueError as exc:
+        raise HttpError(422, str(exc)) from exc

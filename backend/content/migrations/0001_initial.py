@@ -138,8 +138,8 @@ class Migration(migrations.Migration):
                         max_length=20,
                     ),
                 ),
-                ("source", models.CharField(blank=True, max_length=100)),
-                ("external_id", models.CharField(blank=True, max_length=255)),
+                ("source", models.CharField(blank=True, max_length=100, null=True)),
+                ("external_id", models.CharField(blank=True, max_length=255, null=True)),
                 ("metadata", models.JSONField(blank=True, default=dict)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 (
@@ -159,16 +159,14 @@ class Migration(migrations.Migration):
             model_name="contentitem",
             index=models.Index(
                 fields=["content_type", "status"],
-                name="content_con_content_0d54f9_idx",
+                name="content_type_status_idx",
             ),
         ),
         migrations.AddConstraint(
             model_name="contentlink",
             constraint=models.UniqueConstraint(
-                condition=~models.Q(source="") & ~models.Q(external_id=""),
                 fields=("source", "external_id"),
                 name="unique_source_external_id",
             ),
         ),
     ]
-}
