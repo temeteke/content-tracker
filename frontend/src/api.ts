@@ -11,7 +11,24 @@ export interface ContentItem {
   updated_at: string
 }
 
+export interface ConsumptionHistory {
+  id: string
+  content_item_id: string
+  consumed_at: string
+  rating: number | null
+  comment: string
+  created_at: string
+}
+
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api"
+
+async function parseResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(body || `API request failed: ${response.status}`)
+  }
+  return response.json() as Promise<T>
+}
 
 export async function listItems(params: {
   status?: string
@@ -24,21 +41,46 @@ export async function listItems(params: {
   if (params.query) search.set("query", params.query)
 
   const suffix = search.size ? `?${search.toString()}` : ""
-  const response = await fetch(`${apiBaseUrl}/items${suffix}`)
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`)
-  }
-  return response.json()
+  return parseResponse<ContentItem[]>(await fetch(`${apiBaseUrl}/items${suffix}`))
+}
+
+export async function createItem(payload: {
+  title: string
+  content_type: string
+  status?: string
+}): Promise<ContentItem> {
+  return parseResponse<ContentItem>(
+    await fetch(`${apiBaseUrl}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
 }
 
 export async function updateItemStatus(id: string, status: string): Promise<ContentItem> {
-  const response = await fetch(`${apiBaseUrl}/items/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status }),
-  })
-  if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`)
-  }
-  return response.json()
+  return parseResponse<ContentItem>(
+    await fetch(`${apiBaseUrl}/items/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    }),
+  )
+}
+
+export async function addConsumptionHistory(
+  id: string,
+  payload: {
+    consumed_at: string
+    rating: number | null
+    comment: string
+  },
+): Promise<ConsumptionHistory> {
+  return parseResponse<ConsumptionHistory>(
+    await fetch(`${apiBaseUrl}/items/${id}/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  )
 }
