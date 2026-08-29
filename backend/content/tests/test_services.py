@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -34,7 +34,7 @@ def test_merge_moves_links_history_and_children():
     )
     history = ConsumptionHistory.objects.create(
         content_item=source,
-        consumed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        consumed_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
     merge_content_items(target_id=target.id, source_id=source.id)
