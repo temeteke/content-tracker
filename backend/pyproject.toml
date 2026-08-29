@@ -1,12 +1,14 @@
 [project]
 name = "content-tracker-backend"
-version = "0.1.0"
+version = "0.2.0"
 description = "Backend API for content-tracker"
 requires-python = ">=3.12"
 dependencies = [
   "Django~=6.1",
   "django-ninja~=1.6.2",
   "psycopg[binary]>=3.2,<4",
+  "pydantic>=2,<3",
+  "PyYAML>=6,<7",
 ]
 
 [project.optional-dependencies]
@@ -18,7 +20,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["config*", "content*"]
+include = ["config*", "content*", "content_tracker_plugin_api*"]
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
