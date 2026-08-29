@@ -24,6 +24,20 @@ def test_import_candidates_is_idempotent_by_source_external_id():
 
 
 @pytest.mark.django_db
+def test_import_candidates_rejects_empty_title():
+    candidate = ContentCandidate(
+        source="example",
+        external_id="empty",
+        title=" ",
+        content_type=ContentType.VIDEO,
+        source_url="https://example.invalid/empty",
+    )
+
+    with pytest.raises(ValueError, match="title"):
+        import_candidates([candidate])
+
+
+@pytest.mark.django_db
 def test_merge_moves_links_history_and_children():
     target = ContentItem.objects.create(title="Canonical")
     source = ContentItem.objects.create(title="Duplicate")
@@ -47,3 +61,12 @@ def test_merge_moves_links_history_and_children():
     assert link.content_item == target
     assert history.content_item == target
     assert not ContentItem.objects.filter(id=source.id).exists()
+
+
+@pytest.mark.django_db
+def test_merge_rejects_items_in_same_hierarchy_branch():
+    parent = ContentItem.objects.create(title="Parent")
+    child = ContentItem.objects.create(title="Child", parent=parent)
+
+    with pytest.raises(ValueError, match="hierarchy branch"):
+        merge_content_items(target_id=parent.id, source_id=child.id)

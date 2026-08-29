@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from ninja.testing import TestClient
@@ -31,6 +31,16 @@ def test_create_search_and_update_content_item():
 
 
 @pytest.mark.django_db
+def test_empty_title_is_rejected():
+    response = client.post(
+        "/items",
+        json={"title": "", "content_type": "video"},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.django_db
 def test_consumption_history_marks_item_completed():
     item = ContentItem.objects.create(title="Episode")
 
@@ -48,6 +58,25 @@ def test_consumption_history_marks_item_completed():
 
 
 @pytest.mark.django_db
+def test_consumption_history_requires_timezone_and_non_future_date():
+    item = ContentItem.objects.create(title="Episode")
+
+    naive = client.post(
+        f"/items/{item.id}/history",
+        json={"consumed_at": "2026-08-01T12:00:00"},
+    )
+    assert naive.status_code == 422
+
+    future = client.post(
+        f"/items/{item.id}/history",
+        json={
+            "consumed_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        },
+    )
+    assert future.status_code == 422
+
+
+@pytest.mark.django_db
 def test_hierarchy_cycle_is_rejected():
     parent = ContentItem.objects.create(title="Parent")
     child = ContentItem.objects.create(title="Child", parent=parent)
@@ -61,10 +90,16 @@ def test_hierarchy_cycle_is_rejected():
 
 
 @pytest.mark.django_db
-def test_content_link_is_globally_unique():
+def test_content_link_is_globally_unique_and_requires_http_url():
     first = ContentItem.objects.create(title="First")
     second = ContentItem.objects.create(title="Second")
     payload = {"url": "https://example.invalid/content"}
 
     assert client.post(f"/items/{first.id}/links", json=payload).status_code == 201
     assert client.post(f"/items/{second.id}/links", json=payload).status_code == 409
+
+    invalid = client.post(
+        f"/items/{second.id}/links",
+        json={"url": "not-a-url"},
+    )
+    assert invalid.status_code == 422

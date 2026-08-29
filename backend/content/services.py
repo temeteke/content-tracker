@@ -54,6 +54,9 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
     updated = 0
 
     for candidate in candidates:
+        title = candidate.title.strip()
+        if not title:
+            raise ValueError("candidate title must not be empty")
         if candidate.content_type not in ContentType.values:
             raise ValueError(f"unsupported content type: {candidate.content_type}")
 
@@ -70,7 +73,7 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
 
         if link is None:
             item = ContentItem.objects.create(
-                title=candidate.title,
+                title=title,
                 content_type=candidate.content_type,
                 published_at=candidate.published_at,
                 duration_seconds=candidate.duration_seconds,
@@ -88,7 +91,7 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
             continue
 
         item = link.content_item
-        item.title = candidate.title
+        item.title = title
         item.content_type = candidate.content_type
         item.published_at = candidate.published_at
         item.duration_seconds = candidate.duration_seconds

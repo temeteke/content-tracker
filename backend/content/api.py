@@ -1,10 +1,12 @@
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Annotated
 from uuid import UUID
 
 from django.db import IntegrityError
 from django.shortcuts import get_object_or_404
 from ninja import NinjaAPI, Schema
 from ninja.errors import HttpError
+from pydantic import AnyHttpUrl, Field, field_validator
 
 from .models import (
     ConsumptionHistory,
@@ -16,11 +18,13 @@ from .models import (
 )
 from .services import merge_content_items, validate_parent_assignment
 
-api = NinjaAPI(title="content-tracker API", version="0.3.0")
+api = NinjaAPI(title="content-tracker API", version="0.4.0")
+
+Title = Annotated[str, Field(min_length=1, max_length=500)]
 
 
 class ContentItemIn(Schema):
-    title: str
+    title: Title
     content_type: ContentType = ContentType.OTHER
     parent_id: UUID | None = None
     status: ConsumptionStatus = ConsumptionStatus.PLANNED
@@ -28,7 +32,7 @@ class ContentItemIn(Schema):
 
 
 class ContentItemPatch(Schema):
-    title: str | None = None
+    title: Title | None = None
     content_type: ContentType | None = None
     parent_id: UUID | None = None
     status: ConsumptionStatus | None = None
@@ -49,7 +53,7 @@ class ContentItemOut(Schema):
 
 
 class ContentLinkIn(Schema):
-    url: str
+    url: AnyHttpUrl
     link_type: LinkType = LinkType.SOURCE
     source: str | None = None
     external_id: str | None = None
@@ -67,8 +71,17 @@ class ContentLinkOut(Schema):
 
 class ConsumptionHistoryIn(Schema):
     consumed_at: datetime
-    rating: int | None = None
+    rating: Annotated[int, Field(ge=1, le=5)] | None = None
     comment: str = ""
+
+    @field_validator("consumed_at")
+    @classmethod
+    def validate_consumed_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("consumed_at must include a timezone")
+        if value > datetime.now(UTC):
+            raise ValueError("consumed_at cannot be in the future")
+        return value
 
 
 class ConsumptionHistoryOut(Schema):
@@ -110,7 +123,7 @@ def list_items(
 def create_item(request, payload: ContentItemIn):
     parent = get_object_or_404(ContentItem, id=payload.parent_id) if payload.parent_id else None
     item = ContentItem.objects.create(
-        title=payload.title,
+        title=payload.title.strip(),
         content_type=payload.content_type,
         parent=parent,
         status=payload.status,
@@ -130,7 +143,7 @@ def update_item(request, item_id: UUID, payload: ContentItemPatch):
     fields = payload.model_fields_set
 
     if "title" in fields and payload.title is not None:
-        item.title = payload.title
+        item.title = payload.title.strip()
     if "content_type" in fields and payload.content_type is not None:
         item.content_type = payload.content_type
     if "status" in fields and payload.status is not None:
@@ -164,7 +177,7 @@ def add_link(request, item_id: UUID, payload: ContentLinkIn):
     try:
         link = ContentLink.objects.create(
             content_item=item,
-            url=payload.url,
+            url=str(payload.url),
             link_type=payload.link_type,
             source=payload.source,
             external_id=payload.external_id,
@@ -188,9 +201,6 @@ def list_history(request, item_id: UUID):
 @api.post("/items/{item_id}/history", response={201: ConsumptionHistoryOut})
 def add_history(request, item_id: UUID, payload: ConsumptionHistoryIn):
     item = get_object_or_404(ContentItem, id=item_id)
-    if payload.rating is not None and not 1 <= payload.rating <= 5:
-        raise HttpError(422, "rating must be between 1 and 5")
-
     history = ConsumptionHistory.objects.create(
         content_item=item,
         consumed_at=payload.consumed_at,
