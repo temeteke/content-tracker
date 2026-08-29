@@ -1,10 +1,14 @@
 from collections.abc import Iterable
 from uuid import UUID
 
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.db import transaction
 
 from .adapters.base import ContentCandidate
 from .models import ContentItem, ContentLink, ContentType, LinkType
+
+validate_http_url = URLValidator(schemes=["http", "https"])
 
 
 def _is_ancestor(ancestor: ContentItem, item: ContentItem) -> bool:
@@ -60,16 +64,13 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
         if candidate.content_type not in ContentType.values:
             raise ValueError(f"unsupported content type: {candidate.content_type}")
 
-        link = None
-        if candidate.source and candidate.external_id:
-            link = ContentLink.objects.select_related("content_item").filter(
-                source=candidate.source,
-                external_id=candidate.external_id,
-            ).first()
-        if link is None:
-            link = ContentLink.objects.select_related("content_item").filter(
-                url=candidate.source_url
-            ).first()
+        url = candidate.url.strip()
+        try:
+            validate_http_url(url)
+        except ValidationError as exc:
+            raise ValueError("candidate url must be a valid HTTP(S) URL") from exc
+
+        link = ContentLink.objects.select_related("content_item").filter(url=url).first()
 
         if link is None:
             item = ContentItem.objects.create(
@@ -81,10 +82,8 @@ def import_candidates(candidates: Iterable[ContentCandidate]) -> tuple[int, int]
             )
             ContentLink.objects.create(
                 content_item=item,
-                url=candidate.source_url,
+                url=url,
                 link_type=LinkType.SOURCE,
-                source=candidate.source or None,
-                external_id=candidate.external_id or None,
                 metadata=candidate.metadata,
             )
             created += 1

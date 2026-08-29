@@ -81,19 +81,11 @@ class ContentLink(models.Model):
         choices=LinkType.choices,
         default=LinkType.SOURCE,
     )
-    source = models.CharField(max_length=100, null=True, blank=True)
-    external_id = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["created_at"]
-        constraints = [
-            models.UniqueConstraint(
-                fields=["source", "external_id"],
-                name="unique_source_external_id",
-            )
-        ]
 
     def __str__(self) -> str:
         return self.url

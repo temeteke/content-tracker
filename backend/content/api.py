@@ -18,7 +18,7 @@ from .models import (
 )
 from .services import merge_content_items, validate_parent_assignment
 
-api = NinjaAPI(title="content-tracker API", version="0.4.0")
+api = NinjaAPI(title="content-tracker API", version="0.5.0")
 
 Title = Annotated[str, Field(min_length=1, max_length=500)]
 
@@ -55,8 +55,6 @@ class ContentItemOut(Schema):
 class ContentLinkIn(Schema):
     url: AnyHttpUrl
     link_type: LinkType = LinkType.SOURCE
-    source: str | None = None
-    external_id: str | None = None
 
 
 class ContentLinkOut(Schema):
@@ -64,8 +62,6 @@ class ContentLinkOut(Schema):
     content_item_id: UUID
     url: str
     link_type: str
-    source: str | None
-    external_id: str | None
     created_at: datetime
 
 
@@ -179,8 +175,6 @@ def add_link(request, item_id: UUID, payload: ContentLinkIn):
             content_item=item,
             url=str(payload.url),
             link_type=payload.link_type,
-            source=payload.source,
-            external_id=payload.external_id,
         )
     except IntegrityError as exc:
         raise HttpError(409, "link already exists") from exc

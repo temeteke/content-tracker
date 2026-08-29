@@ -8,13 +8,11 @@ from content.services import import_candidates, merge_content_items
 
 
 @pytest.mark.django_db
-def test_import_candidates_is_idempotent_by_source_external_id():
+def test_import_candidates_is_idempotent_by_url():
     candidate = ContentCandidate(
-        source="example",
-        external_id="episode-1",
         title="Episode 1",
         content_type=ContentType.PODCAST,
-        source_url="https://example.invalid/episode-1",
+        url="https://example.invalid/episode-1",
     )
 
     assert import_candidates([candidate]) == (1, 0)
@@ -26,14 +24,24 @@ def test_import_candidates_is_idempotent_by_source_external_id():
 @pytest.mark.django_db
 def test_import_candidates_rejects_empty_title():
     candidate = ContentCandidate(
-        source="example",
-        external_id="empty",
         title=" ",
         content_type=ContentType.VIDEO,
-        source_url="https://example.invalid/empty",
+        url="https://example.invalid/empty",
     )
 
     with pytest.raises(ValueError, match="title"):
+        import_candidates([candidate])
+
+
+@pytest.mark.django_db
+def test_import_candidates_rejects_invalid_url():
+    candidate = ContentCandidate(
+        title="Invalid URL",
+        content_type=ContentType.VIDEO,
+        url="not-a-url",
+    )
+
+    with pytest.raises(ValueError, match="url"):
         import_candidates([candidate])
 
 

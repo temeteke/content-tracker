@@ -11,11 +11,9 @@ class FakeAdapter:
     def fetch(self):
         return [
             ContentCandidate(
-                source="test-source",
-                external_id="item-1",
                 title="Imported item",
                 content_type=ContentType.RADIO,
-                source_url="https://example.invalid/imported-item",
+                url="https://example.invalid/imported-item",
             )
         ]
 

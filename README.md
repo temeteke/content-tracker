@@ -8,7 +8,7 @@ The application is intentionally separated from media storage and playback syste
 
 - Track metadata for web video, TV recordings, radio, podcasts, books, manga, and other content.
 - Organize ContentItems in an arbitrary parent/child hierarchy.
-- Attach globally unique ContentLinks and preserve source metadata for later processing.
+- Attach globally unique ContentLinks; use URL as the MVP import identity key.
 - Plan content with `planned`, `active`, `completed`, and `dropped` states.
 - Record multiple consumption events per ContentItem.
 - Merge duplicate ContentItems manually while retaining their links and history.
@@ -16,7 +16,7 @@ The application is intentionally separated from media storage and playback syste
 
 ## Non-goals
 
-content-tracker does **not** own media files, playback URLs, authentication credentials for source systems, or playback position. Those remain responsibilities of the source libraries and players.
+content-tracker does **not** own media files, playback position, authentication credentials for source systems, or source-system deployment details. Those remain responsibilities of the source libraries and players.
 
 ## Technology
 
@@ -54,13 +54,17 @@ The Vite development server proxies `/api` to the backend. Override `VITE_DEV_PR
 
 ### Source synchronization
 
-Source adapters implement `content.adapters.base.SourceAdapter` and return metadata-only `ContentCandidate` objects. Run one or more adapters with:
+Source adapters implement `content.adapters.base.SourceAdapter` and return metadata-only `ContentCandidate` objects. Each candidate supplies a globally unique HTTP(S) URL, which is currently used as the import identity key.
+
+Run one or more adapters with:
 
 ```console
 python manage.py sync_content package.module.AdapterClass
 ```
 
 A deployment repository can invoke the same command from a Kubernetes CronJob. Adapter endpoints and credentials must be supplied at runtime rather than committed here.
+
+See [ADR 0001](docs/decisions/0001-use-url-as-mvp-identity.md) for the URL identity decision.
 
 ## Public repository policy
 
