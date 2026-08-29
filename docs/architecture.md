@@ -3,9 +3,11 @@
 ## Responsibility
 
 content-tracker owns content metadata, arbitrary hierarchy, consumption planning/status,
-consumption history, human-usable content links, and source-adapter interfaces.
+consumption history, human-usable content links, source configuration loading, adapter
+discovery, and synchronization runtime state.
 
-It does not own media files, playback position, source credentials, or deployment configuration.
+It does not own media files, playback position, source credentials, plugin installation, or
+deployment configuration.
 
 ## Core model
 
@@ -30,18 +32,46 @@ no stable URL, an ExternalReference model can be introduced at that point.
 
 Each consumption is a separate record, allowing rewatching, relistening, and rereading.
 
-## Source adapters
+### SourceDefinition and SourceState
 
-Adapters are pull-based and fetch metadata only. They do not download media. Each
-ContentCandidate must provide a valid HTTP(S) URL, which is used as the MVP import identity.
+SourceDefinition is read from the runtime YAML file and is the desired configuration. It
+contains a stable key, adapter key, enabled flag, and plugin-specific configuration.
 
-Credentials and endpoint configuration are runtime configuration and must not be committed.
+SourceState is persisted in PostgreSQL and stores only runtime state such as the adapter sync
+cursor, last synchronization time, and last error.
 
-The current adapter interface is intentionally minimal. SourceInstance and richer plugin
-configuration will be introduced when the first real external adapter is implemented.
+Configuration and runtime state are intentionally separate.
+
+## Plugin API
+
+Adapter packages are normal Python distributions installed into the runtime image. They
+register an entry point in the `content_tracker.adapters` group.
+
+The public plugin API lives in `content_tracker_plugin_api`. An adapter declares:
+
+- `api_version`
+- a Pydantic `config_model`
+- `fetch(SyncContext) -> SyncResult`
+
+Adapters return metadata-only ContentCandidate values. They do not download media and do not
+access the content-tracker database.
+
+The host validates each source config with the adapter's Pydantic model before calling it.
+
+## Source configuration
+
+The application accepts the source YAML path through `CONTENT_TRACKER_SOURCES_FILE` or the
+`--sources-file` command option. The repository location and Kubernetes mount path are
+deployment concerns.
+
+A safe example is available at `sources.example.yaml`.
 
 ## Deployment boundary
 
-Application containers may be built from this repository. Kubernetes manifests, Helm charts,
-Helmfile configuration, ingress, storage, and environment-specific secrets belong in a
-separate deployment repository.
+The deployment repository decides which plugin packages are installed in the immutable runtime
+image. A separate deployment-level plugin manifest such as `plugins.yaml` may be used by the
+image build, but the running content-tracker application does not read it.
+
+Kubernetes manifests, Helm charts, Helmfile configuration, ingress, storage, image composition,
+source file placement, and environment-specific secrets belong in a separate deployment
+repository.

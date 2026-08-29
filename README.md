@@ -12,11 +12,11 @@ The application is intentionally separated from media storage and playback syste
 - Plan content with `planned`, `active`, `completed`, and `dropped` states.
 - Record multiple consumption events per ContentItem.
 - Merge duplicate ContentItems manually while retaining their links and history.
-- Import metadata through pull-based adapters.
+- Import metadata through separately installed source-adapter plugins.
 
 ## Non-goals
 
-content-tracker does **not** own media files, playback position, authentication credentials for source systems, or source-system deployment details. Those remain responsibilities of the source libraries and players.
+content-tracker does **not** own media files, playback position, authentication credentials for source systems, plugin installation, or source-system deployment details. Those remain responsibilities of source systems and deployment configuration.
 
 ## Technology
 
@@ -25,7 +25,7 @@ content-tracker does **not** own media files, playback position, authentication 
 - Frontend: Vue 3 + TypeScript + Vite + Vuetify + Pinia
 - Runtime packaging: containers
 
-Kubernetes manifests, Helm charts, and environment-specific deployment configuration are intentionally maintained in a separate deployment repository. This repository contains only application code and application-level configuration.
+Kubernetes manifests, Helm charts, plugin composition, and environment-specific deployment configuration are intentionally maintained in a separate deployment repository.
 
 ## Development
 
@@ -52,19 +52,38 @@ npm run dev
 
 The Vite development server proxies `/api` to the backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
 
-### Source synchronization
+## Source adapters and configuration
 
-Source adapters implement `content.adapters.base.SourceAdapter` and return metadata-only `ContentCandidate` objects. Each candidate supplies a globally unique HTTP(S) URL, which is currently used as the import identity key.
+Adapters are installed as Python packages and register an entry point in the
+`content_tracker.adapters` group. The application discovers only what is already installed in
+the runtime image.
 
-Run one or more adapters with:
+List installed adapters:
 
 ```console
-python manage.py sync_content package.module.AdapterClass
+python manage.py list_adapters
 ```
 
-A deployment repository can invoke the same command from a Kubernetes CronJob. Adapter endpoints and credentials must be supplied at runtime rather than committed here.
+Runtime source definitions live in a separate YAML file. content-tracker does not fix its
+repository location or mount path. Set `CONTENT_TRACKER_SOURCES_FILE`, or override it on the
+command line:
 
-See [ADR 0001](docs/decisions/0001-use-url-as-mvp-identity.md) for the URL identity decision.
+```console
+python manage.py sync_content --sources-file ./sources.example.yaml
+```
+
+A source definition contains a stable key, an adapter key, and adapter-specific configuration.
+The adapter validates its own config with a Pydantic schema. Runtime synchronization state is
+stored in the database rather than written back to YAML.
+
+The deployment repository is responsible for a separate plugin manifest such as
+`plugins.yaml` and for building an immutable runtime image containing those packages.
+content-tracker itself does not install packages at startup.
+
+See:
+
+- [ADR 0001](docs/decisions/0001-use-url-as-mvp-identity.md) for URL identity.
+- [ADR 0002](docs/decisions/0002-plugin-and-source-configuration.md) for plugin discovery and source configuration.
 
 ## Public repository policy
 
@@ -76,7 +95,7 @@ This repository must not contain private deployment details or secrets. In parti
 - production database connection strings
 - exported user consumption data
 
-Runtime-specific configuration belongs in environment variables or deployment-specific secret/configuration stores.
+Runtime-specific configuration belongs in environment variables, mounted configuration, or deployment-specific secret stores.
 
 ## Development status
 
