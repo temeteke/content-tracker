@@ -112,3 +112,18 @@ class ConsumptionHistory(models.Model):
 
     def __str__(self) -> str:
         return f"{self.content_item}: {self.consumed_at.isoformat()}"
+
+
+class SourceState(models.Model):
+    source_key = models.CharField(max_length=128, unique=True)
+    sync_state = models.JSONField(default=dict, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["source_key"]
+
+    def __str__(self) -> str:
+        return self.source_key
