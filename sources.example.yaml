@@ -1,0 +1,8 @@
+apiVersion: content-tracker/v1
+
+sources:
+  - key: example-podcast
+    adapter: podcast
+    enabled: true
+    config:
+      feed_url: https://example.org/podcast/feed.xml
