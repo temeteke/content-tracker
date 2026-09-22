@@ -1,0 +1,32 @@
+{
+  "name": "content-tracker",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.14"
+    },
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "24"
+    }
+  },
+  "forwardPorts": [8000, 5173],
+  "portsAttributes": {
+    "8000": {
+      "label": "Django API"
+    },
+    "5173": {
+      "label": "Vite frontend"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "Vue.volar"
+      ]
+    }
+  }
+}

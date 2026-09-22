@@ -52,6 +52,30 @@ npm run dev
 
 The Vite development server proxies `/api` to the backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
 
+
+### VS Code Dev Container
+
+The repository includes a Dev Container for VS Code. Open the repository folder and run
+`Dev Containers: Reopen in Container`.
+
+The container installs Python 3.14 and Node.js 24, then installs the backend development
+dependencies, frontend npm dependencies, and applies the SQLite migrations automatically.
+
+Start the backend and frontend in separate terminals:
+
+```console
+cd backend
+python manage.py runserver 0.0.0.0:8000
+```
+
+```console
+cd frontend
+npm run dev -- --host 0.0.0.0
+```
+
+Ports 8000 and 5173 are forwarded by the Dev Container configuration. SQLite remains the
+default development database unless `DB_HOST` is configured.
+
 ## Source adapters and configuration
 
 Adapters are installed as Python packages and register an entry point in the
