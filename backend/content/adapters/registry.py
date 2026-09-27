@@ -11,6 +11,13 @@ class AdapterRegistryError(ValueError):
     pass
 
 
+class AdapterImportError(Exception):
+    """Adapter entry-point import failed.
+
+    The message is fixed; the chained cause may embed secrets and is never emitted.
+    """
+
+
 def discover_adapters() -> dict[str, EntryPoint]:
     return {entry_point.name: entry_point for entry_point in entry_points(group=ENTRY_POINT_GROUP)}
 
@@ -20,7 +27,10 @@ def load_adapter(adapter_key: str) -> type[SourceAdapter]:
     if entry_point is None:
         raise AdapterRegistryError(f'adapter "{adapter_key}" is not installed')
 
-    adapter_class = entry_point.load()
+    try:
+        adapter_class = entry_point.load()
+    except Exception as exc:
+        raise AdapterImportError(f'adapter "{adapter_key}" failed to load') from exc
     if getattr(adapter_class, "api_version", None) != PLUGIN_API_VERSION:
         raise AdapterRegistryError(
             f'adapter "{adapter_key}" does not support plugin API v{PLUGIN_API_VERSION}'

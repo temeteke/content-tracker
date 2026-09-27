@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "content-tracker-backend"
 version = "0.2.0"
@@ -17,13 +21,16 @@ dev = [
   "pytest-django>=4.10,<5",
   "ruff>=0.12,<1",
 ]
+prod = [
+  "gunicorn>=23,<24",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["config*", "content*", "content_tracker_plugin_api*"]
 
 [tool.pytest.ini_options]
-DJANGO_SETTINGS_MODULE = "config.settings"
+DJANGO_SETTINGS_MODULE = "config.test_settings"
 python_files = ["test_*.py"]
 testpaths = ["content/tests"]
 

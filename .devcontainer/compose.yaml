@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      target: dev
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./backend:/app
+    environment:
+      DJANGO_DEBUG: "true"
+      DB_HOST: db
+      DB_PORT: "5432"
+
+  frontend:
+    build:
+      target: dev
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports: !override
+      - "5173:5173"
+    environment:
+      VITE_DEV_PROXY_TARGET: http://backend:8000
+
+  workspace:
+    image: mcr.microsoft.com/devcontainers/base:bookworm
+    command: sleep infinity
+    volumes:
+      - .:/workspaces/content-tracker:cached
+    environment:
+      DJANGO_DEBUG: "true"
+      DB_HOST: db
+      DB_PORT: "5432"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - default
+      - backend

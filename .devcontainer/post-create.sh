@@ -10,7 +10,7 @@ if [[ -n "${NVM_DIR:-}" && -s "${NVM_DIR}/nvm.sh" ]]; then
   . "${NVM_DIR}/nvm.sh"
 fi
 
-npm --prefix "${repo_root}/frontend" install
+npm --prefix "${repo_root}/frontend" ci
 
 (
   cd "${repo_root}/backend"

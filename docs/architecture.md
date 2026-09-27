@@ -42,6 +42,57 @@ cursor, last synchronization time, and last error.
 
 Configuration and runtime state are intentionally separate.
 
+## Concurrency
+
+`ContentItem` and `SourceState` carry a monotonically increasing `revision` integer. Updates use
+an optimistic-lock compare-and-set: the caller supplies the revision it read, and the write is a
+conditional `UPDATE ... WHERE id = ? AND revision = ?`. A zero-row result means another writer
+won the race.
+
+- Source synchronization fetches data outside a transaction, validates the result, then updates
+  `SourceState` and imports candidates in a single short transaction. If the revision changed
+  during the fetch, the whole result is discarded and reported as a conflict; the cursor never
+  moves backwards.
+- The `PATCH /api/items/{id}` endpoint requires the expected `revision`. A stale value returns
+  `409 Conflict`, and a missing item returns `404 Not Found`.
+- Plugin output is validated at the boundary. Candidate titles, URLs, content types, durations,
+  timestamps, and metadata must satisfy the same limits as the database, and `next_state` must be
+  JSON serializable before any content is imported.
+- URL uniqueness is the final guard for concurrent imports. A unique-constraint violation is
+  caught per candidate, and the existing link is re-fetched and updated instead of failing the
+  whole synchronization.
+
+Concurrency guarantees are defined and tested against PostgreSQL. SQLite is supported only as a
+convenience for fast local tests; `SELECT ... FOR UPDATE` is a no-op there, so SQLite is not a
+correctness reference.
+
+## Error reporting
+
+Operational errors are reported as structured, value-free summaries so that secrets can never
+leak into logs by construction. Only exception class names, Pydantic field paths, and error
+codes are recorded; free-text messages and input values from adapter code are never emitted.
+Host-authored messages (audited to be value-free) are preserved for diagnostics.
+
+- `SourceState.last_error` and the `sync_content` command output carry these summaries.
+- Per-source CLI lines are always type-only summaries; host detail beyond the type lives in
+  `last_error` (inspectable via the Django shell, as it is not exposed by the API).
+- Detailed tracebacks only appear on explicit `--traceback` debugging runs and unexpected bugs.
+  Treat that output as sensitive because traceback frames contain configuration values.
+
+## Local containers
+
+Two Docker Compose configurations exist for local use, and both share one PostgreSQL service and
+data volume so that verification sees development data.
+
+- The root `compose.yaml` builds the production-equivalent images (`gunicorn` for the backend,
+  `nginx` for the frontend) and is used for verification from the host. It is a reference stack,
+  not the production deployment.
+- `.devcontainer/compose.yaml` overrides `backend` and `frontend` to build the `dev` stage and
+  bind-mount the source, and adds a `workspace` service that VS Code attaches to.
+
+Both compose files use the same service names, so development and verification are run one mode
+at a time.
+
 ## Plugin API
 
 Adapter packages are normal Python distributions installed into the runtime image. They

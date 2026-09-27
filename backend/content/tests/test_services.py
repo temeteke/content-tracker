@@ -1,10 +1,11 @@
+import uuid
 from datetime import UTC, datetime
 
 import pytest
 
 from content.adapters.base import ContentCandidate
 from content.models import ConsumptionHistory, ContentItem, ContentLink, ContentType
-from content.services import import_candidates, merge_content_items
+from content.services import NotFoundError, import_candidates, merge_content_items
 
 
 @pytest.mark.django_db
@@ -78,3 +79,44 @@ def test_merge_rejects_items_in_same_hierarchy_branch():
 
     with pytest.raises(ValueError, match="hierarchy branch"):
         merge_content_items(target_id=parent.id, source_id=child.id)
+
+
+@pytest.mark.django_db
+def test_merge_bumps_child_revision():
+    target = ContentItem.objects.create(title="Canonical")
+    source = ContentItem.objects.create(title="Duplicate")
+    child = ContentItem.objects.create(title="Child", parent=source)
+
+    merge_content_items(target_id=target.id, source_id=source.id)
+
+    child.refresh_from_db()
+    assert child.parent == target
+    assert child.revision == 2
+
+
+@pytest.mark.django_db
+def test_merge_missing_item_raises_not_found():
+    target = ContentItem.objects.create(title="Target")
+
+    with pytest.raises(NotFoundError):
+        merge_content_items(target_id=target.id, source_id=uuid.uuid4())
+
+
+@pytest.mark.django_db
+def test_import_candidates_recovers_from_unique_url_race(monkeypatch):
+    candidate = ContentCandidate(
+        title="Racy",
+        content_type=ContentType.VIDEO,
+        url="https://example.invalid/racy",
+    )
+    existing = ContentItem.objects.create(title="Existing")
+    ContentLink.objects.create(content_item=existing, url=candidate.url)
+
+    monkeypatch.setattr("content.services._find_link", lambda url: None)
+
+    assert import_candidates([candidate]) == (0, 1)
+    assert ContentItem.objects.count() == 1
+    assert ContentLink.objects.count() == 1
+    existing.refresh_from_db()
+    assert existing.title == "Racy"
+

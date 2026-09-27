@@ -40,3 +40,22 @@ sources:
 
     with pytest.raises(SourceConfigError, match="duplicate source keys"):
         load_sources_file(path)
+
+
+def test_invalid_source_definition_does_not_leak_values(tmp_path):
+    path = tmp_path / "sources.yaml"
+    path.write_text(
+        """
+apiVersion: content-tracker/v1
+sources:
+  - key: example
+    adapter: podcast
+    password: SUPERSECRETVALUE
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SourceConfigError) as excinfo:
+        load_sources_file(path)
+
+    assert "SUPERSECRETVALUE" not in str(excinfo.value)

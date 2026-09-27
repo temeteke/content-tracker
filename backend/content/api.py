@@ -2,11 +2,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
+from django.db.models import F
 from django.shortcuts import get_object_or_404
-from ninja import NinjaAPI, Schema
+from django.utils import timezone
+from ninja import NinjaAPI, Query, Schema
 from ninja.errors import HttpError
-from pydantic import AnyHttpUrl, Field, field_validator
+from pydantic import BeforeValidator, Field, field_validator
 
 from .models import (
     ConsumptionHistory,
@@ -16,11 +18,17 @@ from .models import (
     ContentType,
     LinkType,
 )
-from .services import merge_content_items, validate_parent_assignment
+from .services import NotFoundError, merge_content_items, validate_parent_assignment
+from .validation import MAX_URL_LENGTH, normalize_http_url
 
-api = NinjaAPI(title="content-tracker API", version="0.5.0")
+api = NinjaAPI(title="content-tracker API", version="0.6.0")
 
-Title = Annotated[str, Field(min_length=1, max_length=500)]
+
+def _strip(value):
+    return value.strip() if isinstance(value, str) else value
+
+
+Title = Annotated[str, BeforeValidator(_strip), Field(min_length=1, max_length=500)]
 
 
 class ContentItemIn(Schema):
@@ -32,6 +40,7 @@ class ContentItemIn(Schema):
 
 
 class ContentItemPatch(Schema):
+    revision: int
     title: Title | None = None
     content_type: ContentType | None = None
     parent_id: UUID | None = None
@@ -48,13 +57,22 @@ class ContentItemOut(Schema):
     description: str
     published_at: datetime | None
     duration_seconds: int | None
+    revision: int
     created_at: datetime
     updated_at: datetime
 
 
 class ContentLinkIn(Schema):
-    url: AnyHttpUrl
+    url: Annotated[str, Field(min_length=1, max_length=MAX_URL_LENGTH)]
     link_type: LinkType = LinkType.SOURCE
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        try:
+            return normalize_http_url(value)
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 class ContentLinkOut(Schema):
@@ -93,6 +111,16 @@ class MergeIn(Schema):
     source_item_id: UUID
 
 
+def _lock_items(*item_ids: UUID | None) -> dict[UUID, ContentItem]:
+    ids = sorted({item_id for item_id in item_ids if item_id is not None}, key=str)
+    locked: dict[UUID, ContentItem] = {}
+    for item_id in ids:
+        item = ContentItem.objects.select_for_update().filter(id=item_id).first()
+        if item is not None:
+            locked[item.id] = item
+    return locked
+
+
 @api.get("/health")
 def health(request):
     return {"status": "ok"}
@@ -104,6 +132,8 @@ def list_items(
     content_type: ContentType | None = None,
     status: ConsumptionStatus | None = None,
     query: str | None = None,
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
     items = ContentItem.objects.all()
     if content_type is not None:
@@ -112,14 +142,14 @@ def list_items(
         items = items.filter(status=status)
     if query:
         items = items.filter(title__icontains=query.strip())
-    return items
+    return items[offset : offset + limit]
 
 
 @api.post("/items", response={201: ContentItemOut})
 def create_item(request, payload: ContentItemIn):
     parent = get_object_or_404(ContentItem, id=payload.parent_id) if payload.parent_id else None
     item = ContentItem.objects.create(
-        title=payload.title.strip(),
+        title=payload.title,
         content_type=payload.content_type,
         parent=parent,
         status=payload.status,
@@ -135,30 +165,59 @@ def get_item(request, item_id: UUID):
 
 @api.patch("/items/{item_id}", response=ContentItemOut)
 def update_item(request, item_id: UUID, payload: ContentItemPatch):
-    item = get_object_or_404(ContentItem, id=item_id)
+    existing = get_object_or_404(ContentItem, id=item_id)
     fields = payload.model_fields_set
 
-    if "title" in fields and payload.title is not None:
-        item.title = payload.title.strip()
-    if "content_type" in fields and payload.content_type is not None:
-        item.content_type = payload.content_type
-    if "status" in fields and payload.status is not None:
-        item.status = payload.status
-    if "description" in fields and payload.description is not None:
-        item.description = payload.description
-    if "parent_id" in fields:
-        parent = (
-            get_object_or_404(ContentItem, id=payload.parent_id)
-            if payload.parent_id
-            else None
-        )
-        try:
-            validate_parent_assignment(item, parent)
-        except ValueError as exc:
-            raise HttpError(422, str(exc)) from exc
-        item.parent = parent
+    for name in ("title", "content_type", "status", "description"):
+        if name in fields and getattr(payload, name) is None:
+            raise HttpError(422, f"{name} must not be null")
 
-    item.save()
+    updates = {}
+    for name in ("title", "content_type", "status", "description"):
+        if name in fields:
+            updates[name] = getattr(payload, name)
+
+    with transaction.atomic():
+        lock_ids = [existing.id]
+        if "parent_id" in fields and payload.parent_id is not None:
+            lock_ids.append(payload.parent_id)
+
+        locked = _lock_items(*lock_ids)
+        item = locked.get(existing.id)
+        if item is None:
+            raise HttpError(404, "content item not found")
+
+        if item.revision != payload.revision:
+            raise HttpError(409, "content item was modified by another request")
+
+        if "parent_id" in fields:
+            if payload.parent_id is None:
+                parent = None
+            else:
+                parent = locked.get(payload.parent_id)
+                if parent is None:
+                    raise HttpError(404, "parent content item not found")
+            try:
+                validate_parent_assignment(item, parent)
+            except ValueError as exc:
+                raise HttpError(422, str(exc)) from exc
+            updates["parent"] = parent
+
+        if not updates:
+            raise HttpError(422, "no updatable fields were provided")
+
+        updated = ContentItem.objects.filter(
+            pk=item.id,
+            revision=payload.revision,
+        ).update(
+            **updates,
+            revision=F("revision") + 1,
+            updated_at=timezone.now(),
+        )
+        if updated == 0:
+            raise HttpError(409, "content item was modified by another request")
+
+    item.refresh_from_db()
     return item
 
 
@@ -173,7 +232,7 @@ def add_link(request, item_id: UUID, payload: ContentLinkIn):
     try:
         link = ContentLink.objects.create(
             content_item=item,
-            url=str(payload.url),
+            url=payload.url,
             link_type=payload.link_type,
         )
     except IntegrityError as exc:
@@ -195,15 +254,19 @@ def list_history(request, item_id: UUID):
 @api.post("/items/{item_id}/history", response={201: ConsumptionHistoryOut})
 def add_history(request, item_id: UUID, payload: ConsumptionHistoryIn):
     item = get_object_or_404(ContentItem, id=item_id)
-    history = ConsumptionHistory.objects.create(
-        content_item=item,
-        consumed_at=payload.consumed_at,
-        rating=payload.rating,
-        comment=payload.comment,
-    )
-    if item.status != ConsumptionStatus.COMPLETED:
-        item.status = ConsumptionStatus.COMPLETED
-        item.save(update_fields=["status", "updated_at"])
+    with transaction.atomic():
+        history = ConsumptionHistory.objects.create(
+            content_item=item,
+            consumed_at=payload.consumed_at,
+            rating=payload.rating,
+            comment=payload.comment,
+        )
+        if item.status != ConsumptionStatus.COMPLETED:
+            ContentItem.objects.filter(pk=item.id).update(
+                status=ConsumptionStatus.COMPLETED,
+                revision=F("revision") + 1,
+                updated_at=timezone.now(),
+            )
     return 201, history
 
 
@@ -214,5 +277,7 @@ def merge_item(request, item_id: UUID, payload: MergeIn):
             target_id=item_id,
             source_id=payload.source_item_id,
         )
+    except NotFoundError as exc:
+        raise HttpError(404, str(exc)) from exc
     except ValueError as exc:
         raise HttpError(422, str(exc)) from exc

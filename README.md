@@ -29,11 +29,36 @@ Kubernetes manifests, Helm charts, plugin composition, and environment-specific 
 
 ## Development
 
-The backend can use SQLite when `DB_HOST` is empty, so PostgreSQL is not required for basic local development.
+The backend loads the repository-root `.env` file at startup. It uses SQLite while `DB_HOST` is
+empty and PostgreSQL when `DB_HOST` is set. With `DJANGO_DEBUG=true` a development secret is used
+when `DJANGO_SECRET_KEY` is unset; when `DJANGO_DEBUG` is false, `DJANGO_SECRET_KEY` must be set or
+startup fails.
+
+### VS Code Dev Container (recommended)
+
+The repository includes a Dev Container for VS Code. Open the repository folder and run
+`Dev Containers: Reopen in Container`. The first start creates `.env` from `.env.example` if
+it is missing.
+
+The Dev Container is defined with Docker Compose and starts these services:
+
+- `workspace`: the VS Code container (Python 3.14 and Node.js 24) where you edit and run tests.
+- `db`: PostgreSQL 17, shared with the production-equivalent stack below.
+- `backend` / `frontend`: the application in development mode with the source bind-mounted
+  (`runserver` and the Vite dev server).
+
+Ports 8000 and 5173 are forwarded automatically. This setup requires Docker Compose v2.24.4 or
+later (for the `!override` tag used to remap the frontend port).
+
+### Running without the Dev Container
+
+The backend can use SQLite when `DB_HOST` is empty, so PostgreSQL is not required for basic
+local development.
 
 Backend:
 
 ```console
+cp .env.example .env
 cd backend
 python -m venv .venv
 . .venv/bin/activate
@@ -46,35 +71,34 @@ Frontend:
 
 ```console
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-The Vite development server proxies `/api` to the backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
+The Vite development server reads the repository-root `.env` and proxies `/api` to the
+backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
 
+### Production-equivalent stack
 
-### VS Code Dev Container
-
-The repository includes a Dev Container for VS Code. Open the repository folder and run
-`Dev Containers: Reopen in Container`.
-
-The container installs Python 3.14 and Node.js 24, then installs the backend development
-dependencies, frontend npm dependencies, and applies the SQLite migrations automatically.
-
-Start the backend and frontend in separate terminals:
+The root `compose.yaml` builds the production images (gunicorn + nginx) and uses the same
+PostgreSQL data volume as the Dev Container, so you can verify behavior against the data you
+created during development. It is a reference stack, not the production deployment; Kubernetes
+manifests live in the separate deployment repository.
 
 ```console
-cd backend
-python manage.py runserver 0.0.0.0:8000
+cp .env.example .env
+docker compose up --build
 ```
+
+The frontend is served on `http://localhost:8080` (override with `FRONTEND_PORT`). The database
+is not published to the host. Apply migrations with:
 
 ```console
-cd frontend
-npm run dev -- --host 0.0.0.0
+docker compose run --rm backend python manage.py migrate
 ```
 
-Ports 8000 and 5173 are forwarded by the Dev Container configuration. SQLite remains the
-default development database unless `DB_HOST` is configured.
+Development and verification use the same service names, so run one mode at a time. Reset the
+shared database with `docker compose down -v`.
 
 ## Source adapters and configuration
 
@@ -90,11 +114,15 @@ python manage.py list_adapters
 
 Runtime source definitions live in a separate YAML file. content-tracker does not fix its
 repository location or mount path. Set `CONTENT_TRACKER_SOURCES_FILE`, or override it on the
-command line:
+command line. From the `backend` directory, the example file is one level up:
 
 ```console
-python manage.py sync_content --sources-file ./sources.example.yaml
+python manage.py sync_content --sources-file ../sources.example.yaml
 ```
+
+The example references a `podcast` adapter that is not part of this repository. Install the
+matching adapter package before running the command; otherwise `sync_content` reports that the
+adapter is not installed.
 
 A source definition contains a stable key, an adapter key, and adapter-specific configuration.
 The adapter validates its own config with a Pydantic schema. Runtime synchronization state is

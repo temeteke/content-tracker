@@ -4,6 +4,7 @@ import { onMounted, ref } from "vue"
 import {
   addConsumptionHistory,
   createItem,
+  ITEMS_PAGE_SIZE,
   listItems,
   type ContentItem,
   updateItemStatus,
@@ -11,9 +12,13 @@ import {
 
 const items = ref<ContentItem[]>([])
 const loading = ref(true)
+const loadingMore = ref(false)
+const hasMore = ref(false)
 const error = ref("")
 const query = ref("")
 const status = ref("")
+const appliedFilters = ref<{ query?: string; status?: string }>({})
+let listRequestId = 0
 
 const addDialog = ref(false)
 const newTitle = ref("")
@@ -53,26 +58,67 @@ function localDateTimeValue(): string {
 }
 
 async function loadItems() {
+  const requestId = ++listRequestId
   loading.value = true
   error.value = ""
+  const filters = {
+    query: query.value || undefined,
+    status: status.value || undefined,
+  }
   try {
-    items.value = await listItems({
-      query: query.value || undefined,
-      status: status.value || undefined,
+    const page = await listItems({
+      ...filters,
+      offset: 0,
+      limit: ITEMS_PAGE_SIZE + 1,
     })
+    if (requestId !== listRequestId) return
+    appliedFilters.value = filters
+    hasMore.value = page.length > ITEMS_PAGE_SIZE
+    items.value = page.slice(0, ITEMS_PAGE_SIZE)
   } catch (cause) {
+    if (requestId !== listRequestId) return
     error.value = cause instanceof Error ? cause.message : "Failed to load content"
   } finally {
-    loading.value = false
+    if (requestId === listRequestId) loading.value = false
+  }
+}
+
+async function loadMore() {
+  if (loadingMore.value || !hasMore.value) return
+
+  const requestId = listRequestId
+  loadingMore.value = true
+  error.value = ""
+  try {
+    const page = await listItems({
+      ...appliedFilters.value,
+      offset: items.value.length,
+      limit: ITEMS_PAGE_SIZE + 1,
+    })
+    if (requestId !== listRequestId) return
+    hasMore.value = page.length > ITEMS_PAGE_SIZE
+    items.value = [...items.value, ...page.slice(0, ITEMS_PAGE_SIZE)]
+  } catch (cause) {
+    if (requestId !== listRequestId) return
+    error.value = cause instanceof Error ? cause.message : "Failed to load more content"
+  } finally {
+    loadingMore.value = false
   }
 }
 
 async function changeStatus(item: ContentItem, nextStatus: string) {
   try {
-    const updated = await updateItemStatus(item.id, nextStatus)
-    Object.assign(item, updated)
+    const updated = await updateItemStatus(item.id, nextStatus, item.revision)
+    if (appliedFilters.value.status && updated.status !== appliedFilters.value.status) {
+      items.value = items.value.filter((entry) => entry.id !== updated.id)
+    } else {
+      const current = items.value.find((entry) => entry.id === updated.id)
+      if (current) Object.assign(current, updated)
+    }
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : "Failed to update content"
+    const message = cause instanceof Error ? cause.message : "Failed to update content"
+    await loadItems()
+    error.value = message
   }
 }
 
@@ -217,6 +263,12 @@ onMounted(loadItems)
             </template>
           </v-list-item>
         </v-list>
+
+        <div v-if="!loading && hasMore" class="d-flex justify-center mt-4">
+          <v-btn :loading="loadingMore" variant="tonal" @click="loadMore">
+            Load more
+          </v-btn>
+        </div>
       </v-container>
     </v-main>
 

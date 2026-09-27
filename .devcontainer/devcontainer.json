@@ -1,6 +1,10 @@
 {
   "name": "content-tracker",
-  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "dockerComposeFile": ["../compose.yaml", "compose.yaml"],
+  "service": "workspace",
+  "runServices": ["db", "backend", "frontend"],
+  "workspaceFolder": "/workspaces/content-tracker",
+  "initializeCommand": "bash -c '[ -f .env ] || cp .env.example .env'",
   "features": {
     "ghcr.io/devcontainers/features/python:1": {
       "version": "3.14"
@@ -9,12 +13,12 @@
       "version": "24"
     }
   },
-  "forwardPorts": [8000, 5173],
+  "forwardPorts": ["backend:8000", "frontend:5173"],
   "portsAttributes": {
-    "8000": {
+    "backend:8000": {
       "label": "Django API"
     },
-    "5173": {
+    "frontend:5173": {
       "label": "Vite frontend"
     }
   },

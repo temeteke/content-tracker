@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from content.adapters import registry
-from content.adapters.registry import AdapterRegistryError
+from content.adapters.registry import AdapterImportError, AdapterRegistryError
 from content_tracker_plugin_api import PLUGIN_API_VERSION, SyncResult
 
 
@@ -45,3 +45,19 @@ def test_load_adapter_rejects_incompatible_api(monkeypatch):
 
     with pytest.raises(AdapterRegistryError, match="plugin API"):
         registry.load_adapter("test")
+
+
+def test_load_adapter_wraps_import_time_failure(monkeypatch):
+    class BrokenEntryPoint:
+        name = "test"
+
+        def load(self):
+            raise AdapterRegistryError("token=SENTINEL-SPOOF")
+
+    monkeypatch.setattr(registry, "discover_adapters", lambda: {"test": BrokenEntryPoint()})
+
+    with pytest.raises(AdapterImportError) as excinfo:
+        registry.load_adapter("test")
+
+    assert "SENTINEL-SPOOF" not in str(excinfo.value)
+    assert isinstance(excinfo.value.__cause__, AdapterRegistryError)

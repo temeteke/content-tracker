@@ -14,6 +14,8 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    env:
+      DJANGO_SECRET_KEY: ci-only-secret-key
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -23,6 +25,42 @@ jobs:
       - run: python manage.py makemigrations --check
       - run: pytest
       - run: ruff check .
+
+  backend-postgres:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: content_tracker
+          POSTGRES_USER: content_tracker
+          POSTGRES_PASSWORD: content_tracker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SECRET_KEY: ci-only-secret-key
+      DB_HOST: 127.0.0.1
+      DB_PORT: "5432"
+      DB_NAME: content_tracker
+      DB_USER: content_tracker
+      DB_PASSWORD: content_tracker
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev]"
+      - run: python manage.py makemigrations --check
+      - run: python manage.py migrate
+      - run: pytest
 
   frontend:
     runs-on: ubuntu-latest
@@ -35,5 +73,18 @@ jobs:
         with:
           node-version: "24"
           package-manager-cache: false
-      - run: npm install
+      - run: npm ci
       - run: npm run build
+
+  containers:
+    runs-on: ubuntu-latest
+    env:
+      DJANGO_SECRET_KEY: ci-only-secret-key
+      DB_PASSWORD: ci-only-password
+    steps:
+      - uses: actions/checkout@v7
+      - run: cp .env.example .env
+      - run: docker compose config
+      - run: docker compose -f compose.yaml -f .devcontainer/compose.yaml config
+      - run: docker build --target prod ./backend
+      - run: docker build --target prod ./frontend

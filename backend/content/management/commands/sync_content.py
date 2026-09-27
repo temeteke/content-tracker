@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from content.source_config import SourceConfigError, load_sources_file
 from content.sync import sync_source
+from content.validation import describe_error
 
 
 class Command(BaseCommand):
@@ -57,7 +58,7 @@ class Command(BaseCommand):
             try:
                 outcome = sync_source(source)
             except Exception as exc:
-                failures.append(f"{source.key}: {type(exc).__name__}: {exc}")
+                failures.append(f"{source.key}: {describe_error(exc)}")
                 self.stderr.write(self.style.ERROR(failures[-1]))
                 continue
 

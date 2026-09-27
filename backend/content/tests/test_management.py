@@ -2,6 +2,7 @@ from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from pydantic import BaseModel
 
 from content import sync
@@ -59,3 +60,23 @@ sources:
 
     assert ContentItem.objects.filter(title="Imported item").exists()
     assert "test-source: created=1 updated=0" in output.getvalue()
+
+
+@pytest.mark.django_db
+def test_sync_content_does_not_leak_invalid_source_values(tmp_path):
+    sources_file = tmp_path / "sources.yaml"
+    sources_file.write_text(
+        """
+apiVersion: content-tracker/v1
+sources:
+  - key: test-source
+    adapter: fake
+    password: SUPERSECRETVALUE
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("sync_content", "--sources-file", str(sources_file))
+
+    assert "SUPERSECRETVALUE" not in str(excinfo.value)

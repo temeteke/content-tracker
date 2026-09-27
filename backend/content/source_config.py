@@ -4,6 +4,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from .validation import describe_host_error
+
 
 class SourceConfigError(ValueError):
     pass
@@ -12,8 +14,8 @@ class SourceConfigError(ValueError):
 class SourceDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
-    adapter: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    key: str = Field(max_length=128, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    adapter: str = Field(max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
 
@@ -52,4 +54,6 @@ def load_sources_file(path: str | Path) -> SourcesDocument:
     try:
         return SourcesDocument.model_validate(raw)
     except ValidationError as exc:
-        raise SourceConfigError(f"invalid sources file {source_path}: {exc}") from exc
+        raise SourceConfigError(
+            f"invalid sources file {source_path}: {describe_host_error(exc)}"
+        ) from exc
