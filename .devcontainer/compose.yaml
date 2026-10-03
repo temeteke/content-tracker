@@ -14,6 +14,9 @@ services:
     build:
       target: dev
     command: npm run dev -- --host 0.0.0.0
+    depends_on:
+      backend:
+        condition: service_started
     volumes:
       - ./frontend:/app
       - /app/node_modules

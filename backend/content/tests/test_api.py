@@ -1,10 +1,12 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import pytest
+from django.db import connection
 from ninja.testing import TestClient
 
 from content.api import api
-from content.models import ConsumptionStatus, ContentItem
+from content.models import ConsumptionHistory, ConsumptionStatus, ContentItem
 
 client = TestClient(api)
 
@@ -262,3 +264,122 @@ def test_content_link_preserves_url_identity_without_implicit_normalization():
 
     assert created.status_code == 201
     assert created.json()["url"] == "https://example.invalid"
+
+
+@pytest.mark.django_db
+def test_health_reports_ok():
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.django_db
+def test_health_reports_unavailable_when_database_is_down():
+    with patch.object(connection, "cursor", side_effect=Exception("db down")):
+        response = client.get("/health")
+
+    assert response.status_code == 503
+
+
+@pytest.mark.django_db
+def test_delete_item_requires_revision_and_detaches_children():
+    parent = ContentItem.objects.create(title="Parent")
+    child = ContentItem.objects.create(title="Child", parent=parent)
+
+    missing = client.delete(f"/items/{parent.id}")
+    assert missing.status_code == 422
+
+    stale = client.delete(
+        f"/items/{parent.id}", query_params={"revision": parent.revision + 1}
+    )
+    assert stale.status_code == 409
+
+    response = client.delete(
+        f"/items/{parent.id}", query_params={"revision": parent.revision}
+    )
+    assert response.status_code == 204
+    assert ContentItem.objects.filter(id=parent.id).exists() is False
+
+    child.refresh_from_db()
+    assert child.parent is None
+    assert child.revision == 2
+
+
+@pytest.mark.django_db
+def test_delete_missing_item_returns_not_found():
+    response = client.delete(
+        "/items/00000000-0000-0000-0000-000000000000",
+        query_params={"revision": 1},
+    )
+
+    assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_list_items_includes_total_count_and_parent_filter():
+    parent = ContentItem.objects.create(title="Parent")
+    ContentItem.objects.create(title="Child", parent=parent)
+    ContentItem.objects.create(title="Other")
+
+    filtered = client.get("/items", query_params={"parent_id": str(parent.id)})
+    assert filtered.status_code == 200
+    assert filtered["X-Total-Count"] == "1"
+    assert [item["title"] for item in filtered.json()] == ["Child"]
+
+    all_items = client.get("/items")
+    assert all_items.status_code == 200
+    assert all_items["X-Total-Count"] == "3"
+
+
+@pytest.mark.django_db
+def test_update_and_delete_consumption_history():
+    item = ContentItem.objects.create(title="Episode")
+    history = ConsumptionHistory.objects.create(
+        content_item=item,
+        consumed_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+        rating=3,
+        comment="first",
+    )
+
+    fetched = client.get(f"/history/{history.id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["rating"] == 3
+
+    patched = client.patch(
+        f"/history/{history.id}",
+        json={"rating": 5, "comment": "updated"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["rating"] == 5
+    assert patched.json()["comment"] == "updated"
+
+    item.refresh_from_db()
+    assert item.revision == 2
+
+    noop = client.patch(f"/history/{history.id}", json={})
+    assert noop.status_code == 422
+
+    future = client.patch(
+        f"/history/{history.id}",
+        json={"consumed_at": (datetime.now(UTC) + timedelta(days=1)).isoformat()},
+    )
+    assert future.status_code == 422
+
+    deleted = client.delete(f"/history/{history.id}")
+    assert deleted.status_code == 204
+    assert ConsumptionHistory.objects.filter(id=history.id).exists() is False
+
+    item.refresh_from_db()
+    assert item.revision == 3
+
+
+@pytest.mark.django_db
+def test_missing_history_returns_not_found():
+    missing_id = "00000000-0000-0000-0000-000000000000"
+
+    assert client.get(f"/history/{missing_id}").status_code == 404
+    assert (
+        client.patch(f"/history/{missing_id}", json={"rating": 4}).status_code == 404
+    )
+    assert client.delete(f"/history/{missing_id}").status_code == 404

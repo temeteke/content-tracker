@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.db.models import F
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from ninja import NinjaAPI, Query, Schema
@@ -107,6 +108,23 @@ class ConsumptionHistoryOut(Schema):
     created_at: datetime
 
 
+class ConsumptionHistoryPatch(Schema):
+    consumed_at: datetime | None = None
+    rating: Annotated[int, Field(ge=1, le=5)] | None = None
+    comment: str | None = None
+
+    @field_validator("consumed_at")
+    @classmethod
+    def validate_consumed_at(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("consumed_at must include a timezone")
+        if value > datetime.now(UTC):
+            raise ValueError("consumed_at cannot be in the future")
+        return value
+
+
 class MergeIn(Schema):
     source_item_id: UUID
 
@@ -123,15 +141,22 @@ def _lock_items(*item_ids: UUID | None) -> dict[UUID, ContentItem]:
 
 @api.get("/health")
 def health(request):
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except Exception as exc:
+        raise HttpError(503, "database is unavailable") from exc
     return {"status": "ok"}
 
 
 @api.get("/items", response=list[ContentItemOut])
 def list_items(
     request,
+    response: HttpResponse,
     content_type: ContentType | None = None,
     status: ConsumptionStatus | None = None,
     query: str | None = None,
+    parent_id: UUID | None = None,
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -142,6 +167,10 @@ def list_items(
         items = items.filter(status=status)
     if query:
         items = items.filter(title__icontains=query.strip())
+    if parent_id is not None:
+        items = items.filter(parent_id=parent_id)
+    total = items.count()
+    response["X-Total-Count"] = str(total)
     return items[offset : offset + limit]
 
 
@@ -161,6 +190,23 @@ def create_item(request, payload: ContentItemIn):
 @api.get("/items/{item_id}", response=ContentItemOut)
 def get_item(request, item_id: UUID):
     return get_object_or_404(ContentItem, id=item_id)
+
+
+@api.delete("/items/{item_id}", response={204: None})
+def delete_item(request, item_id: UUID, revision: int = Query(..., ge=1)):
+    with transaction.atomic():
+        item = ContentItem.objects.select_for_update().filter(id=item_id).first()
+        if item is None:
+            raise HttpError(404, "content item not found")
+        if item.revision != revision:
+            raise HttpError(409, "content item was modified by another request")
+        ContentItem.objects.filter(parent=item).update(
+            parent=None,
+            revision=F("revision") + 1,
+            updated_at=timezone.now(),
+        )
+        item.delete()
+    return 204, None
 
 
 @api.patch("/items/{item_id}", response=ContentItemOut)
@@ -249,6 +295,61 @@ def delete_link(request, link_id: UUID):
 @api.get("/items/{item_id}/history", response=list[ConsumptionHistoryOut])
 def list_history(request, item_id: UUID):
     return get_object_or_404(ContentItem, id=item_id).consumption_history.all()
+
+
+@api.get("/history/{history_id}", response=ConsumptionHistoryOut)
+def get_history(request, history_id: UUID):
+    return get_object_or_404(ConsumptionHistory, id=history_id)
+
+
+@api.patch("/history/{history_id}", response=ConsumptionHistoryOut)
+def update_history(request, history_id: UUID, payload: ConsumptionHistoryPatch):
+    fields = payload.model_fields_set
+    updates = {}
+    for name in ("consumed_at", "rating", "comment"):
+        if name in fields:
+            updates[name] = getattr(payload, name)
+
+    if not updates:
+        raise HttpError(422, "no updatable fields were provided")
+
+    with transaction.atomic():
+        history = (
+            ConsumptionHistory.objects.select_for_update()
+            .select_related("content_item")
+            .filter(id=history_id)
+            .first()
+        )
+        if history is None:
+            raise HttpError(404, "consumption history not found")
+        for name, value in updates.items():
+            setattr(history, name, value)
+        history.save(update_fields=list(updates))
+        ContentItem.objects.filter(pk=history.content_item_id).update(
+            revision=F("revision") + 1,
+            updated_at=timezone.now(),
+        )
+    history.refresh_from_db()
+    return history
+
+
+@api.delete("/history/{history_id}", response={204: None})
+def delete_history(request, history_id: UUID):
+    with transaction.atomic():
+        history = (
+            ConsumptionHistory.objects.select_for_update()
+            .filter(id=history_id)
+            .first()
+        )
+        if history is None:
+            raise HttpError(404, "consumption history not found")
+        item_id = history.content_item_id
+        history.delete()
+        ContentItem.objects.filter(pk=item_id).update(
+            revision=F("revision") + 1,
+            updated_at=timezone.now(),
+        )
+    return 204, None
 
 
 @api.post("/items/{item_id}/history", response={201: ConsumptionHistoryOut})

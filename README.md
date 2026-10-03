@@ -18,6 +18,9 @@ The application is intentionally separated from media storage and playback syste
 
 content-tracker does **not** own media files, playback position, authentication credentials for source systems, plugin installation, or source-system deployment details. Those remain responsibilities of source systems and deployment configuration.
 
+This MVP also has no API authentication: it is intended for single-user local use behind
+localhost or a trusted reverse proxy. Do not expose it directly to untrusted networks.
+
 ## Technology
 
 - Backend: Django + Django Ninja
@@ -78,6 +81,34 @@ npm run dev
 The Vite development server reads the repository-root `.env` and proxies `/api` to the
 backend. Override `VITE_DEV_PROXY_TARGET` locally if necessary.
 
+Frontend checks:
+
+```console
+cd frontend
+npm run lint
+npm run format:check
+npm run typecheck
+npm run test
+npm run test:e2e
+```
+
+The E2E smoke test expects the backend on `E2E_API_URL` (default
+`http://localhost:8000/api`) and the Vite dev server on `E2E_BASE_URL` (default
+`http://localhost:5173`), and it cleans up the content it creates.
+
+## API
+
+Interactive API docs (development): `http://localhost:8000/api/docs`.
+
+- `GET /api/health` checks database connectivity and returns `503` when unavailable.
+- `GET /api/items` returns `X-Total-Count` with the number of matching items and
+  supports `content_type`, `status`, `query`, `parent_id`, `limit`, and `offset`.
+- `DELETE /api/items/{id}?revision=N` deletes an item with optimistic locking; its
+  children are detached, and its links and history are removed.
+- `PATCH /history/{id}` and `DELETE /history/{id}` correct or remove a consumption
+  record and bump the parent item revision.
+- `POST /api/items/{id}/merge` merges another item into the target.
+
 ### Production-equivalent stack
 
 The root `compose.yaml` builds the production images (gunicorn + nginx) and uses the same
@@ -100,6 +131,13 @@ docker compose run --rm backend python manage.py migrate
 Development and verification use the same service names, so run one mode at a time. Reset the
 shared database with `docker compose down -v`.
 
+Back up the PostgreSQL volume before destructive operations. The deployment repository owns
+automated backups; for a manual snapshot:
+
+```console
+docker compose exec db pg_dump -U content_tracker content_tracker > backup.sql
+```
+
 ## Source adapters and configuration
 
 Adapters are installed as Python packages and register an entry point in the
@@ -120,9 +158,9 @@ command line. From the `backend` directory, the example file is one level up:
 python manage.py sync_content --sources-file ../sources.example.yaml
 ```
 
-The example references a `podcast` adapter that is not part of this repository. Install the
-matching adapter package before running the command; otherwise `sync_content` reports that the
-adapter is not installed.
+The example references a `podcast` adapter that is not part of this repository. A reference
+implementation is maintained separately and installed by the deployment image build.
+Otherwise `sync_content` reports that the adapter is not installed.
 
 A source definition contains a stable key, an adapter key, and adapter-specific configuration.
 The adapter validates its own config with a Pydantic schema. Runtime synchronization state is
@@ -151,4 +189,6 @@ Runtime-specific configuration belongs in environment variables, mounted configu
 
 ## Development status
 
-Initial MVP development is in progress.
+MVP scope (hierarchy, URL-identity links, four planning states, multiple consumption
+records, manual merge, adapter import via CLI) is implemented across the API and UI.
+Remaining work is driven by real-adapter feedback and deployment needs.

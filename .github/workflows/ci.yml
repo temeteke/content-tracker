@@ -74,7 +74,34 @@ jobs:
           node-version: "24"
           package-manager-cache: false
       - run: npm ci
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run test
       - run: npm run build
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - run: npx playwright install chromium --with-deps
+      - run: pip install -e ../backend
+      - name: E2E smoke (backend + vite + playwright)
+        run: |
+          set -euo pipefail
+          python ../backend/manage.py migrate
+          python ../backend/manage.py runserver 127.0.0.1:8001 &
+          BACKEND_PID=$!
+          VITE_DEV_PROXY_TARGET=http://127.0.0.1:8001 npm run dev -- --port 5173 &
+          VITE_PID=$!
+          cleanup() {
+            kill "$BACKEND_PID" "$VITE_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          npx wait-on http://127.0.0.1:8001/api/health http://localhost:5173/ --timeout 60000
+          npm run test:e2e
+        env:
+          DJANGO_SECRET_KEY: ci-only-secret-key
+          E2E_BASE_URL: http://localhost:5173
+          E2E_API_URL: http://127.0.0.1:8001/api
 
   containers:
     runs-on: ubuntu-latest
@@ -88,3 +115,15 @@ jobs:
       - run: docker compose -f compose.yaml -f .devcontainer/compose.yaml config
       - run: docker build --target prod ./backend
       - run: docker build --target prod ./frontend
+      - run: docker compose up -d --build
+      - run: docker compose run --rm backend python manage.py migrate
+      - run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/api/health; then break; fi
+            sleep 2
+          done
+          curl -sf http://localhost:8000/api/health
+          curl -sf "http://localhost:8000/api/items?limit=1"
+          curl -sf http://localhost:8080/api/health
+      - run: docker compose down
+        if: always()
