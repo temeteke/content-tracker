@@ -1,0 +1,20 @@
+services:
+  frontend:
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.content-tracker.rule: "Host(`content-tracker.${TRAEFIK_HOST_SUFFIX:-localhost}`)"
+      traefik.http.routers.content-tracker.service: content-tracker
+      traefik.http.services.content-tracker.loadbalancer.server.port: "80"
+      traefik.docker.network: traefik
+    networks:
+      - default
+      - backend
+      - traefik
+
+  backend:
+    environment:
+      DJANGO_ALLOWED_HOSTS: "content-tracker.${TRAEFIK_HOST_SUFFIX:-localhost},localhost,127.0.0.1"
+
+networks:
+  traefik:
+    external: true
