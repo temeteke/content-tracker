@@ -118,18 +118,25 @@ manifests live in the separate deployment repository.
 
 ```console
 cp .env.example .env
-docker compose up --build
+make up
 ```
 
-The frontend is served on `http://localhost:8080` (override with `FRONTEND_PORT`). The database
-is not published to the host. Apply migrations with:
+The frontend is served through Traefik at `http://content-tracker.localhost`. To keep
+multiple user environments separate on the same machine, set
+`TRAEFIK_HOST_SUFFIX=user.localhost` in `.env`; the URL then becomes
+`http://content-tracker.user.localhost`. The database is not published to the host.
+
+The Makefile uses `compose.yaml` together with `compose.traefik.yaml` and creates the
+external `traefik` Docker network if it does not already exist. The Traefik instance
+itself must also be attached to that network. Apply migrations with:
 
 ```console
 docker compose run --rm backend python manage.py migrate
 ```
 
-Development and verification use the same service names, so run one mode at a time. Reset the
-shared database with `docker compose down -v`.
+Development and verification use the same service names, so run one mode at a time. Stop the
+Traefik-backed stack with `make down`. Reset the shared database with
+`docker compose -f compose.yaml -f compose.traefik.yaml down -v`.
 
 Back up the PostgreSQL volume before destructive operations. The deployment repository owns
 automated backups; for a manual snapshot:
