@@ -121,10 +121,10 @@ cp .env.example .env
 make up
 ```
 
-The frontend is served through Traefik at `http://content-tracker.localhost`. To keep
-multiple user environments separate on the same machine, set
-`TRAEFIK_HOST_SUFFIX=user.localhost` in `.env`; the URL then becomes
-`http://content-tracker.user.localhost`. The database is not published to the host.
+The frontend is served through Traefik at `http://content-tracker.localhost`. To use
+a distinct local hostname namespace, set `TRAEFIK_HOST_SUFFIX=dev.localhost` in
+`.env`; the URL then becomes `http://content-tracker.dev.localhost`. The database
+is not published to the host.
 
 The Makefile uses `compose.yaml` together with `compose.traefik.yaml` and creates the
 external `traefik` Docker network if it does not already exist. The Traefik instance
