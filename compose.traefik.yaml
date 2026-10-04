@@ -13,7 +13,7 @@ services:
 
   backend:
     environment:
-      DJANGO_ALLOWED_HOSTS: "content-tracker.${TRAEFIK_HOST_SUFFIX:-localhost},localhost,127.0.0.1"
+      DJANGO_ALLOWED_HOSTS: "content-tracker.${TRAEFIK_HOST_SUFFIX:-localhost},${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}"
 
 networks:
   traefik:
